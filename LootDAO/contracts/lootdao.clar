@@ -193,3 +193,147 @@
         (ok true)
     )
 )
+
+;; Public Functions - Proposal and Voting System
+
+;; Create a new proposal
+(define-public (create-proposal 
+    (title (string-ascii 100))
+    (description (string-ascii 500))
+    (amount uint)
+    (recipient principal)
+    (proposal-type (string-ascii 20))
+)
+    (let
+        (
+            (sender tx-sender)
+            (proposal-id (+ (var-get proposal-counter) u1))
+            (member-info (unwrap! (map-get? members sender) err-not-member))
+        )
+        (asserts! (> amount u0) err-invalid-amount)
+        (asserts! (<= amount (var-get treasury-balance)) err-insufficient-balance)
+        
+        (map-set proposals proposal-id
+            {
+                title: title,
+                description: description,
+                amount: amount,
+                recipient: recipient,
+                proposer: sender,
+                created-at: stacks-block-height,
+                voting-ends: (+ stacks-block-height voting-duration),
+                votes-for: u0,
+                votes-against: u0,
+                total-voters: u0,
+                executed: false,
+                proposal-type: proposal-type
+            }
+        )
+        
+        (var-set proposal-counter proposal-id)
+        
+        ;; Update member's proposal history
+        (let ((current-proposals (default-to (list) (map-get? member-proposals sender))))
+            (map-set member-proposals sender 
+                (unwrap! (as-max-len? (append current-proposals proposal-id) u10) (ok proposal-id))
+            )
+        )
+        
+        (ok proposal-id)
+    )
+)
+
+;; Vote on a proposal
+(define-public (vote (proposal-id uint) (support bool))
+    (let
+        (
+            (sender tx-sender)
+            (proposal (unwrap! (map-get? proposals proposal-id) err-proposal-not-found))
+            (member-info (unwrap! (map-get? members sender) err-not-member))
+            (voting-power (get voting-power member-info))
+        )
+        (asserts! (<= stacks-block-height (get voting-ends proposal)) err-voting-ended)
+        (asserts! (is-none (map-get? votes {proposal-id: proposal-id, voter: sender})) err-already-voted)
+        
+        (map-set votes {proposal-id: proposal-id, voter: sender}
+            {
+                vote: support,
+                voting-power: voting-power,
+                timestamp: stacks-block-height
+            }
+        )
+        
+        (if support
+            (map-set proposals proposal-id
+                (merge proposal
+                    {
+                        votes-for: (+ (get votes-for proposal) voting-power),
+                        total-voters: (+ (get total-voters proposal) u1)
+                    }
+                )
+            )
+            (map-set proposals proposal-id
+                (merge proposal
+                    {
+                        votes-against: (+ (get votes-against proposal) voting-power),
+                        total-voters: (+ (get total-voters proposal) u1)
+                    }
+                )
+            )
+        )
+        
+        ;; Increase reputation for active participation
+        (map-set members sender
+            (merge member-info
+                {
+                    reputation: (+ (get reputation member-info) u5)
+                }
+            )
+        )
+        
+        (ok true)
+    )
+)
+
+;; Execute a passed proposal
+(define-public (execute-proposal (proposal-id uint))
+    (let
+        (
+            (proposal (unwrap! (map-get? proposals proposal-id) err-proposal-not-found))
+            (votes-for (get votes-for proposal))
+            (votes-against (get votes-against proposal))
+            (total-voters (get total-voters proposal))
+            (total-voting-power (calculate-total-voting-power))
+        )
+        (asserts! (> stacks-block-height (get voting-ends proposal)) err-voting-active)
+        (asserts! (not (get executed proposal)) err-already-executed)
+        
+        ;; Check if proposal passed (simple majority + quorum)
+        (asserts! (> votes-for votes-against) err-proposal-not-passed)
+        (asserts! (>= (* total-voters u100) (* total-voting-power quorum-threshold)) err-proposal-not-passed)
+        
+        ;; Execute transfer
+        (try! (as-contract (stx-transfer? (get amount proposal) tx-sender (get recipient proposal))))
+        
+        ;; Update proposal status
+        (map-set proposals proposal-id
+            (merge proposal { executed: true })
+        )
+        
+        ;; Update treasury balance
+        (var-set treasury-balance (- (var-get treasury-balance) (get amount proposal)))
+        
+        ;; Reward proposer with reputation
+        (let ((proposer-info (unwrap! (map-get? members (get proposer proposal)) err-not-member)))
+            (map-set members (get proposer proposal)
+                (merge proposer-info
+                    {
+                        reputation: (+ (get reputation proposer-info) u50)
+                    }
+                )
+            )
+        )
+        
+        (ok true)
+    )
+)
