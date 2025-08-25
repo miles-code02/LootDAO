@@ -99,7 +99,7 @@
 
 (define-data-var reward-counter uint u0)
 
-;; Public Functions - Member Management
+;; Public Functions
 
 ;; Join DAO by staking tokens
 (define-public (join-dao (stake-amount uint))
@@ -160,41 +160,6 @@
         (ok true)
     )
 )
-
-;; Withdraw stake (leave DAO)
-(define-public (withdraw-stake)
-    (let
-        (
-            (sender tx-sender)
-            (member-info (unwrap! (map-get? members sender) err-not-member))
-            (stake-amount (get stake member-info))
-        )
-        ;; Simple withdrawal - in production, might want cooldown period
-        (try! (as-contract (stx-transfer? stake-amount tx-sender sender)))
-        
-        (map-delete members sender)
-        (var-set total-members (- (var-get total-members) u1))
-        (var-set total-staked (- (var-get total-staked) stake-amount))
-        (var-set treasury-balance (- (var-get treasury-balance) stake-amount))
-        
-        (ok true)
-    )
-)
-
-;; Donate to treasury
-(define-public (donate (amount uint))
-    (let ((sender tx-sender))
-        (asserts! (> amount u0) err-invalid-amount)
-        (asserts! (>= (stx-get-balance sender) amount) err-insufficient-balance)
-        
-        (try! (stx-transfer? amount sender (as-contract tx-sender)))
-        (var-set treasury-balance (+ (var-get treasury-balance) amount))
-        
-        (ok true)
-    )
-)
-
-;; Public Functions - Proposal and Voting System
 
 ;; Create a new proposal
 (define-public (create-proposal 
@@ -401,5 +366,109 @@
         (var-set reward-counter reward-id)
         
         (ok reward-id)
+    )
+)
+
+;; Withdraw stake (leave DAO)
+(define-public (withdraw-stake)
+    (let
+        (
+            (sender tx-sender)
+            (member-info (unwrap! (map-get? members sender) err-not-member))
+            (stake-amount (get stake member-info))
+        )
+        ;; Simple withdrawal - in production, might want cooldown period
+        (try! (as-contract (stx-transfer? stake-amount tx-sender sender)))
+        
+        (map-delete members sender)
+        (var-set total-members (- (var-get total-members) u1))
+        (var-set total-staked (- (var-get total-staked) stake-amount))
+        (var-set treasury-balance (- (var-get treasury-balance) stake-amount))
+        
+        (ok true)
+    )
+)
+
+;; Donate to treasury
+(define-public (donate (amount uint))
+    (let ((sender tx-sender))
+        (asserts! (> amount u0) err-invalid-amount)
+        (asserts! (>= (stx-get-balance sender) amount) err-insufficient-balance)
+        
+        (try! (stx-transfer? amount sender (as-contract tx-sender)))
+        (var-set treasury-balance (+ (var-get treasury-balance) amount))
+        
+        (ok true)
+    )
+)
+
+;; Read-only functions
+
+(define-read-only (get-member (member principal))
+    (map-get? members member)
+)
+
+(define-read-only (get-proposal (proposal-id uint))
+    (map-get? proposals proposal-id)
+)
+
+(define-read-only (get-vote (proposal-id uint) (voter principal))
+    (map-get? votes {proposal-id: proposal-id, voter: voter})
+)
+
+(define-read-only (get-treasury-balance)
+    (var-get treasury-balance)
+)
+
+(define-read-only (get-total-members)
+    (var-get total-members)
+)
+
+(define-read-only (get-total-staked)
+    (var-get total-staked)
+)
+
+(define-read-only (get-tournament (tournament-id uint))
+    (map-get? tournaments tournament-id)
+)
+
+(define-read-only (get-reward-request (reward-id uint))
+    (map-get? rewards reward-id)
+)
+
+(define-read-only (is-member (address principal))
+    (is-some (map-get? members address))
+)
+
+;; Private functions
+
+(define-private (calculate-voting-power (stake uint))
+    ;; Voting power based on stake with diminishing returns
+    (if (<= stake (* min-stake u10))
+        (/ stake u1000000)
+        (+ u10 (/ (- stake (* min-stake u10)) u10000000))
+    )
+)
+
+(define-private (calculate-total-voting-power)
+    ;; Simplified calculation using total staked amount
+    (/ (var-get total-staked) u1000000)
+)
+
+;; Emergency functions (owner only)
+
+(define-public (emergency-pause)
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        ;; Emergency pause logic would go here
+        (ok true)
+    )
+)
+
+(define-public (update-min-stake (new-min-stake uint))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        ;; Would update minimum stake requirement
+        (ok true)
     )
 )
