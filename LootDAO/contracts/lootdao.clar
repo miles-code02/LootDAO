@@ -98,3 +98,98 @@
 )
 
 (define-data-var reward-counter uint u0)
+
+;; Public Functions - Member Management
+
+;; Join DAO by staking tokens
+(define-public (join-dao (stake-amount uint))
+    (let 
+        (
+            (sender tx-sender)
+            (current-balance (stx-get-balance sender))
+        )
+        (asserts! (>= stake-amount min-stake) err-insufficient-stake)
+        (asserts! (>= current-balance stake-amount) err-insufficient-balance)
+        (asserts! (is-none (map-get? members sender)) err-member-exists)
+        
+        (try! (stx-transfer? stake-amount sender (as-contract tx-sender)))
+        
+        (map-set members sender
+            {
+                stake: stake-amount,
+                joined-at: stacks-block-height,
+                voting-power: (calculate-voting-power stake-amount),
+                reputation: u100
+            }
+        )
+        
+        (var-set total-members (+ (var-get total-members) u1))
+        (var-set total-staked (+ (var-get total-staked) stake-amount))
+        (var-set treasury-balance (+ (var-get treasury-balance) stake-amount))
+        
+        (ok true)
+    )
+)
+
+;; Add additional stake
+(define-public (increase-stake (additional-amount uint))
+    (let
+        (
+            (sender tx-sender)
+            (member-info (unwrap! (map-get? members sender) err-not-member))
+            (current-stake (get stake member-info))
+            (new-stake (+ current-stake additional-amount))
+        )
+        (asserts! (> additional-amount u0) err-invalid-amount)
+        (asserts! (>= (stx-get-balance sender) additional-amount) err-insufficient-balance)
+        
+        (try! (stx-transfer? additional-amount sender (as-contract tx-sender)))
+        
+        (map-set members sender
+            (merge member-info
+                {
+                    stake: new-stake,
+                    voting-power: (calculate-voting-power new-stake)
+                }
+            )
+        )
+        
+        (var-set total-staked (+ (var-get total-staked) additional-amount))
+        (var-set treasury-balance (+ (var-get treasury-balance) additional-amount))
+        
+        (ok true)
+    )
+)
+
+;; Withdraw stake (leave DAO)
+(define-public (withdraw-stake)
+    (let
+        (
+            (sender tx-sender)
+            (member-info (unwrap! (map-get? members sender) err-not-member))
+            (stake-amount (get stake member-info))
+        )
+        ;; Simple withdrawal - in production, might want cooldown period
+        (try! (as-contract (stx-transfer? stake-amount tx-sender sender)))
+        
+        (map-delete members sender)
+        (var-set total-members (- (var-get total-members) u1))
+        (var-set total-staked (- (var-get total-staked) stake-amount))
+        (var-set treasury-balance (- (var-get treasury-balance) stake-amount))
+        
+        (ok true)
+    )
+)
+
+;; Donate to treasury
+(define-public (donate (amount uint))
+    (let ((sender tx-sender))
+        (asserts! (> amount u0) err-invalid-amount)
+        (asserts! (>= (stx-get-balance sender) amount) err-insufficient-balance)
+        
+        (try! (stx-transfer? amount sender (as-contract tx-sender)))
+        (var-set treasury-balance (+ (var-get treasury-balance) amount))
+        
+        (ok true)
+    )
+)
