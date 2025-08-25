@@ -337,3 +337,69 @@
         (ok true)
     )
 )
+
+;; Create tournament
+(define-public (create-tournament 
+    (name (string-ascii 100))
+    (prize-pool uint)
+    (duration uint)
+)
+    (let
+        (
+            (sender tx-sender)
+            (tournament-id (+ (var-get tournament-counter) u1))
+            (member-info (unwrap! (map-get? members sender) err-not-member))
+        )
+        (asserts! (> prize-pool u0) err-invalid-amount)
+        (asserts! (> duration u0) err-invalid-duration)
+        (asserts! (<= prize-pool (var-get treasury-balance)) err-insufficient-balance)
+        
+        (map-set tournaments tournament-id
+            {
+                name: name,
+                prize-pool: prize-pool,
+                start-date: stacks-block-height,
+                end-date: (+ stacks-block-height duration),
+                organizer: sender,
+                participants: (list),
+                status: "active"
+            }
+        )
+        
+        (var-set tournament-counter tournament-id)
+        (var-set treasury-balance (- (var-get treasury-balance) prize-pool))
+        
+        (ok tournament-id)
+    )
+)
+
+;; Submit reward request (for game mods, fan art, etc.)
+(define-public (submit-reward-request
+    (category (string-ascii 20))
+    (amount uint)
+    (description (string-ascii 200))
+)
+    (let
+        (
+            (sender tx-sender)
+            (reward-id (+ (var-get reward-counter) u1))
+        )
+        (asserts! (is-some (map-get? members sender)) err-not-member)
+        (asserts! (> amount u0) err-invalid-amount)
+        
+        (map-set rewards reward-id
+            {
+                creator: sender,
+                category: category,
+                amount: amount,
+                description: description,
+                approved: false,
+                created-at: stacks-block-height
+            }
+        )
+        
+        (var-set reward-counter reward-id)
+        
+        (ok reward-id)
+    )
+)
